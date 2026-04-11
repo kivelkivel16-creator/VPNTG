@@ -1,0 +1,12 @@
+# Добавь эти строки в /etc/systemd/journald.conf
+# Потом: sudo systemctl restart systemd-journald
+
+[Journal]
+# Максимальный размер всех логов на диске
+SystemMaxUse=200M
+# Максимальный размер одного файла лога
+SystemMaxFileSize=50M
+# Хранить логи не дольше 2 недель
+MaxRetentionSec=2week
+# Сжимать логи
+Compress=yes

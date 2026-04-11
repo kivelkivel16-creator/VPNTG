@@ -1,0 +1,19 @@
+[Unit]
+Description=VPN Telegram Bot
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/usr/bin/python3 /root/vpn_bot.py
+Restart=always
+RestartSec=10s
+MemoryMax=128M
+
+# Токен и admin ID — НЕ в коде, а здесь
+# Перевыпусти токен у BotFather и вставь сюда
+Environment=BOT_TOKEN=8138290987:AAHINltXtI0To67O_By-BJycfV2DOz2zuYw
+Environment=ADMIN_ID=7670551173
+
+[Install]
+WantedBy=multi-user.target
