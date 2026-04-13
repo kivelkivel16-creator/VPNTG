@@ -22,3 +22,10 @@ app/google-services.json
 release.py
 vpn_bot.py
 firebase_database_rules.json
+.env
+firebase-service-account.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
