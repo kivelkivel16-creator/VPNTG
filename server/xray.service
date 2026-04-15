@@ -15,6 +15,7 @@ RestartSec=5s
 MemoryMax=256M
 # Лимит файловых дескрипторов
 LimitNOFILE=65535
+LimitNPROC=65535
 
 [Install]
 WantedBy=multi-user.target
