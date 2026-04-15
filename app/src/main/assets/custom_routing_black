@@ -13,6 +13,16 @@
     "network": "udp"
   },
   {
+    "remarks": "Direct BlackRussia",
+    "outboundTag": "direct",
+    "domain": [
+      "domain:blackrussia.com",
+      "domain:blackhub.games",
+      "domain:brgame.ru",
+      "domain:launcher.brgame"
+    ]
+  },
+  {
     "remarks": "代理Google",
     "outboundTag": "proxy",
     "domain": [

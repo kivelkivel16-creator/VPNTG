@@ -42,3 +42,11 @@
     public static int v(...);
     public static int d(...);
 }
+
+# Keep TProxyService JNI methods (required by hev-socks5-tunnel native library)
+-keep class com.v2ray.ang.service.TProxyService {
+    public static native *;
+    public static *** TProxyGetStats();
+    public static *** TProxyStartService(...);
+    public static *** TProxyStopService();
+}

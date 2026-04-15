@@ -369,6 +369,10 @@
     <string name="update_now">Update now</string>
     <string name="update_check_pre_release">Check Pre-release</string>
     <string name="update_checking_for_update">Checking for update…</string>
+    <string name="update_downloading">Downloading update…</string>
+    <string name="update_ready_title">Update ready to install</string>
+    <string name="update_ready_text">Tap to install the new version</string>
+    <string name="update_channel_name">App Updates</string>
 
     <string name="title_policy_group_type">Policy group type</string>
     <string name="title_policy_group_subscription_id">From subscription group</string>

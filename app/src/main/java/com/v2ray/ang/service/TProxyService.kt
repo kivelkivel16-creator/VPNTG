@@ -27,7 +27,7 @@ class TProxyService(
         private external fun TProxyStopService()
         @JvmStatic
         @Suppress("FunctionName")
-        private external fun TProxyGetStats(): LongArray?
+        external fun TProxyGetStats(): LongArray?
 
         init {
             System.loadLibrary("hev-socks5-tunnel")

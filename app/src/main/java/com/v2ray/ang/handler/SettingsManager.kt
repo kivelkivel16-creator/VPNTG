@@ -41,6 +41,7 @@ object SettingsManager {
         initRoutingRulesets(context)
         migrateServerListToSubscriptions()
         migrateHysteria2PinSHA256()
+        migrateEnableFragmentDefault()
     }
 
     /**
@@ -460,12 +461,28 @@ object SettingsManager {
         ensureDefaultValue(AppConfig.PREF_MUX_XUDP_CONCURRENCY, "8")
         ensureDefaultValue(AppConfig.PREF_FRAGMENT_LENGTH, "50-100")
         ensureDefaultValue(AppConfig.PREF_FRAGMENT_INTERVAL, "10-20")
+        // Fragment включён по умолчанию — помогает обходить DPI/ТСПУ дросселирование
+        // для VLESS+REALITY и TLS соединений (пакеты 1-3 для REALITY, tlshello для TLS)
+        ensureDefaultBool(AppConfig.PREF_FRAGMENT_ENABLED, false)
     }
 
     private fun ensureDefaultValue(key: String, default: String) {
         if (MmkvManager.decodeSettingsString(key).isNullOrEmpty()) {
             MmkvManager.encodeSettings(key, default)
         }
+    }
+
+    private fun ensureDefaultBool(key: String, default: Boolean) {
+        // MMKV хранит bool отдельно от string, поэтому проверяем через decodeSettingsBool с инвертированным дефолтом
+        // Если значение никогда не было задано, оба вызова вернут разные результаты
+        val storedTrue = MmkvManager.decodeSettingsBool(key, true)
+        val storedFalse = MmkvManager.decodeSettingsBool(key, false)
+        if (storedTrue == storedFalse) {
+            // Значение уже задано явно — не перезаписываем
+            return
+        }
+        // storedTrue != storedFalse означает что ключ не задан (возвращается defaultValue)
+        MmkvManager.encodeSettings(key, default)
     }
 
     private fun migrateHysteria2PinSHA256() {
@@ -561,6 +578,27 @@ object SettingsManager {
                 swapSubscriptions(0, subsList.count() - 1)
             }
         }
+    }
+
+    /**
+     * Одноразовая миграция: включает fragment по умолчанию для существующих пользователей.
+     * Fragment помогает обходить DPI/ТСПУ дросселирование VLESS+REALITY и TLS соединений.
+     * Запускается один раз — не перезаписывает настройку если пользователь менял её вручную после миграции.
+     */
+    private fun migrateEnableFragmentDefault() {
+        val migrationKey = "fragment_enabled_default_migrated_v1"
+        if (MmkvManager.decodeSettingsBool(migrationKey, false)) {
+            return
+        }
+        // Включаем fragment только если пользователь ещё не трогал эту настройку
+        // (оба вызова с разными дефолтами вернут разные значения = ключ не задан)
+        val storedTrue = MmkvManager.decodeSettingsBool(AppConfig.PREF_FRAGMENT_ENABLED, true)
+        val storedFalse = MmkvManager.decodeSettingsBool(AppConfig.PREF_FRAGMENT_ENABLED, false)
+        if (storedTrue != storedFalse) {
+            // Ключ не задан — выключаем (fragment отключён по умолчанию)
+            MmkvManager.encodeSettings(AppConfig.PREF_FRAGMENT_ENABLED, false)
+        }
+        MmkvManager.encodeSettings(migrationKey, true)
     }
 
 }

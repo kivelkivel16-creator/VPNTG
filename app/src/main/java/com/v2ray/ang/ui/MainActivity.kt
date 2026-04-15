@@ -115,8 +115,9 @@ class MainActivity : AppCompatActivity() {
         val db = com.google.firebase.database.FirebaseDatabase.getInstance().reference
         db.child("app_config").get()
             .addOnSuccessListener { snapshot ->
-                val minVersion = snapshot.child("min_version_code").getValue(Long::class.java)
-                Log.d("TelegramVPN", "checkForceUpdate: minVersion=$minVersion")
+                // Firebase может вернуть Int или Long — приводим через Number
+                val minVersion = (snapshot.child("min_version_code").value as? Number)?.toLong()
+                Log.d("TelegramVPN", "checkForceUpdate: minVersion=$minVersion raw=${snapshot.child("min_version_code").value}")
                 if (minVersion == null) return@addOnSuccessListener
                 val downloadUrl = snapshot.child("download_url").getValue(String::class.java)
                 val currentVersion = packageManager.getPackageInfo(packageName, 0).versionCode.toLong()
@@ -143,7 +144,7 @@ class MainActivity : AppCompatActivity() {
             .setCancelable(false)
         if (!downloadUrl.isNullOrBlank()) {
             builder.setPositiveButton("Скачать обновление") { _, _ ->
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)))
+                startApkDownload(downloadUrl)
             }
         } else {
             builder.setPositiveButton("Понятно", null)
@@ -151,12 +152,120 @@ class MainActivity : AppCompatActivity() {
         builder.show()
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (updateRequired) {
-            binding.btnConnect.isEnabled = false
-            showUpdateDialog(updateDownloadUrl)
+    private fun startApkDownload(url: String) {
+        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+        val request = android.app.DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle("Скачивание обновления")
+            setDescription(getString(R.string.app_name))
+            setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationInExternalFilesDir(this@MainActivity, null, "update.apk")
+            setMimeType("application/vnd.android.package-archive")
         }
+        val downloadId = dm.enqueue(request)
+        showDownloadProgressDialog(dm, downloadId)
+    }
+
+    private fun showDownloadProgressDialog(dm: android.app.DownloadManager, downloadId: Long) {
+        val progressBar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            isIndeterminate = true
+            setPadding(48, 16, 48, 0)
+        }
+        val tvPercent = android.widget.TextView(this).apply {
+            text = "Подготовка..."
+            gravity = android.view.Gravity.CENTER
+            setPadding(48, 8, 48, 0)
+        }
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(progressBar)
+            addView(tvPercent)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Загрузка обновления")
+            .setView(container)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val checkProgress = object : Runnable {
+            override fun run() {
+                val cursor = dm.query(android.app.DownloadManager.Query().setFilterById(downloadId))
+                if (!cursor.moveToFirst()) { cursor.close(); return }
+
+                val status = cursor.getInt(cursor.getColumnIndexOrThrow(android.app.DownloadManager.COLUMN_STATUS))
+                val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(android.app.DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = cursor.getLong(cursor.getColumnIndexOrThrow(android.app.DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                cursor.close()
+
+                when (status) {
+                    android.app.DownloadManager.STATUS_RUNNING, android.app.DownloadManager.STATUS_PENDING -> {
+                        if (total > 0) {
+                            val percent = (downloaded * 100 / total).toInt()
+                            progressBar.isIndeterminate = false
+                            progressBar.progress = percent
+                            tvPercent.text = "$percent%  (${downloaded / 1024 / 1024} / ${total / 1024 / 1024} МБ)"
+                        }
+                        handler.postDelayed(this, 500)
+                    }
+                    android.app.DownloadManager.STATUS_SUCCESSFUL -> {
+                        dialog.dismiss()
+                        showInstallInstructionDialog(dm, downloadId)
+                    }
+                    android.app.DownloadManager.STATUS_FAILED -> {
+                        dialog.dismiss()
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Ошибка загрузки")
+                            .setMessage("Не удалось скачать обновление. Попробуйте позже.")
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                    else -> handler.postDelayed(this, 500)
+                }
+            }
+        }
+        handler.post(checkProgress)
+    }
+
+    private fun showInstallInstructionDialog(dm: android.app.DownloadManager, downloadId: Long) {
+        val uri = dm.getUriForDownloadedFile(downloadId)
+        val message = "Чтобы установить обновление:\n\n" +
+            "1. Нажмите «Установить» ниже\n\n" +
+            "Либо, если кнопки «Установить» снизу нет:\n\n" +
+            "2. Откройте шторку уведомлений (свайп сверху вниз)\n" +
+            "3. Найдите уведомление о загрузке\n" +
+            "4. Нажмите на него\n" +
+            "5. В открывшемся окне нажмите «Установить»\n\n" +
+            "Если Android спросит разрешение — нажмите «Разрешить из этого источника»."
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("✅ Загрузка завершена")
+            .setMessage(message)
+            .setCancelable(false)
+            .create()
+
+        dialog.setButton(AlertDialog.BUTTON_POSITIVE, "Установить") { _, _ ->
+            if (uri != null) {
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                runCatching { startActivity(intent) }
+            }
+        }
+        dialog.setButton(AlertDialog.BUTTON_NEGATIVE, "Позже") { _, _ -> }
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(android.graphics.Color.parseColor("#4CAF50")) // зелёный
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+                ?.setTextColor(android.graphics.Color.parseColor("#F44336")) // красный
+        }
+
+        dialog.show()
     }
 
     @Deprecated("Deprecated in Java")
@@ -291,6 +400,41 @@ class MainActivity : AppCompatActivity() {
         binding.btnDiagnostics.setOnClickListener {
             runDiagnostics()
         }
+
+        // Routing mode toggle
+        val savedMode = TelegramVpnConfig.getSavedRoutingMode()
+        updateRoutingToggle(savedMode)
+
+        binding.toggleRoutingMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val mode = when (checkedId) {
+                R.id.btnModeTelegram -> TelegramVpnConfig.RoutingMode.TELEGRAM_ONLY
+                R.id.btnModeSmart    -> TelegramVpnConfig.RoutingMode.SMART_RUSSIA
+                R.id.btnModeAll      -> TelegramVpnConfig.RoutingMode.ALL_TRAFFIC
+                else -> return@addOnButtonCheckedListener
+            }
+            TelegramVpnConfig.applyRoutingMode(this, mode)
+            updateRoutingLabel(mode)
+            if (isRunning) { stopV2Ray(); startV2Ray() }
+        }
+    }
+
+    private fun updateRoutingToggle(mode: TelegramVpnConfig.RoutingMode) {
+        val btnId = when (mode) {
+            TelegramVpnConfig.RoutingMode.TELEGRAM_ONLY -> R.id.btnModeTelegram
+            TelegramVpnConfig.RoutingMode.SMART_RUSSIA  -> R.id.btnModeSmart
+            TelegramVpnConfig.RoutingMode.ALL_TRAFFIC   -> R.id.btnModeAll
+        }
+        binding.toggleRoutingMode.check(btnId)
+        updateRoutingLabel(mode)
+    }
+
+    private fun updateRoutingLabel(mode: TelegramVpnConfig.RoutingMode) {
+        binding.tvRoutingMode.text = when (mode) {
+            TelegramVpnConfig.RoutingMode.TELEGRAM_ONLY -> "Только Telegram"
+            TelegramVpnConfig.RoutingMode.SMART_RUSSIA  -> "Весь трафик, кроме РФ сервисов"
+            TelegramVpnConfig.RoutingMode.ALL_TRAFFIC   -> "Весь трафик"
+        }
     }
 
     // ── VPN control ───────────────────────────────────────────────────────────
@@ -308,6 +452,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startV2Ray() {
         try {
+            AccessManager.updateOnlineStatus(deviceId, true)
             V2RayServiceManager.startVService(this, TelegramVpnConfig.SERVER_GUID)
         } catch (e: Exception) {
             Log.e("TelegramVPN", "Start error: ${e.message}", e)
@@ -315,6 +460,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopV2Ray() {
+        AccessManager.updateOnlineStatus(deviceId, false)
         V2RayServiceManager.stopVService(this)
     }
 
@@ -419,9 +565,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Запрашиваем текущий статус у сервиса
         MessageUtil.sendMsg2Service(this, AppConfig.MSG_REGISTER_CLIENT, "")
         updateVpnUi()
+        if (updateRequired) {
+            binding.btnConnect.isEnabled = false
+            showUpdateDialog(updateDownloadUrl)
+        }
     }
 
     override fun onDestroy() {

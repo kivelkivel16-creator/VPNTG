@@ -18,7 +18,7 @@ object TelegramVpnConfig {
     const val SERVER_ADDRESS = "163.5.180.89"
     const val SERVER_PORT = 8443
     const val SERVER_UUID = "22faa5c3-3d86-4a31-8b0c-873f1e3ebc21"
-    const val SERVER_FLOW = "xtls-rprx-vision"
+    const val SERVER_FLOW = ""
 
     // Reality Configuration
     const val REALITY_DEST = "www.microsoft.com:443"
@@ -26,14 +26,10 @@ object TelegramVpnConfig {
     const val REALITY_FINGERPRINT = "chrome"
     const val REALITY_PUBLIC_KEY = "U-KX0IXOGK-_FU_1SAROQDHheSWkbFMmtQpobCY0b14"
     const val REALITY_SHORT_ID = "ce39eccf69fbb727"
-
-    /**
-     * MTU для TUN/HEV: 1280 — IPv6 minimum PMTU (RFC 8200), на практике самый
-     * «безболезненный» размер под LTE/Wi‑Fi + VPN + SOCKS + длинный hop в Европу:
-     * меньше шансов на фрагментацию/ретраи TCP, чем 1500. Минус — чуть больше
-     * накладных заголовков на мегабайт; если скорость сухая, можно 1320–1400.
-     */
-    const val VPN_TUN_MTU = 1280
+    const val XHTTP_PATH = "/api/v1/updates"
+    const val XHTTP_MODE = "stream-up"
+    const val XHTTP_EXTRA = """{"xPaddingBytes":"100-500"}"""
+    const val VPN_TUN_MTU = 1400
 
     // Known Telegram package names (official + common forks)
     val TELEGRAM_PACKAGES = setOf(
@@ -49,20 +45,46 @@ object TelegramVpnConfig {
         "com.nicegram.app"                 // Nicegram
     )
 
+    const val PREF_ROUTING_MODE = "pref_routing_mode"
+
+    enum class RoutingMode { TELEGRAM_ONLY, SMART_RUSSIA, ALL_TRAFFIC }
+
+    fun getSavedRoutingMode(): RoutingMode {
+        val name = MmkvManager.decodeSettingsString(PREF_ROUTING_MODE) ?: return RoutingMode.TELEGRAM_ONLY
+        return runCatching { RoutingMode.valueOf(name) }.getOrDefault(RoutingMode.TELEGRAM_ONLY)
+    }
+
     /**
      * Initialize Telegram VPN configuration
-     * Saves the server config, routing rulesets, and per-app proxy settings
      */
     fun initializeConfig(context: Context) {
-        // Always reset routing to ensure fresh rules
         MmkvManager.encodeRoutingRulesets(null)
-        // Keep VPN ready after reboot without opening the app manually.
         MmkvManager.encodeStartOnBoot(true)
         MmkvManager.encodeSettings(AppConfig.PREF_VPN_MTU, VPN_TUN_MTU.toString())
-
         saveServerConfig()
-        saveRoutingRulesets()
-        savePerAppProxySettings(context)
+        applyRoutingMode(context, getSavedRoutingMode())
+    }
+
+    /**
+     * Switch routing mode at runtime.
+     */
+    fun applyRoutingMode(context: Context, mode: RoutingMode) {
+        MmkvManager.encodeSettings(PREF_ROUTING_MODE, mode.name)
+        MmkvManager.encodeRoutingRulesets(null)
+        when (mode) {
+            RoutingMode.TELEGRAM_ONLY -> {
+                saveRoutingRulesets()
+                savePerAppProxySettings(context)
+            }
+            RoutingMode.SMART_RUSSIA -> {
+                saveSmartRussiaRulesets()
+                disablePerAppProxy()
+            }
+            RoutingMode.ALL_TRAFFIC -> {
+                saveGlobalRoutingRulesets()
+                disablePerAppProxy()
+            }
+        }
     }
 
     /**
@@ -94,13 +116,16 @@ object TelegramVpnConfig {
             password = SERVER_UUID,
             method = "none",
             flow = SERVER_FLOW,
-            network = "tcp",
+            network = "xhttp",
             security = "reality",
             sni = REALITY_SNI,
             fingerPrint = REALITY_FINGERPRINT,
             publicKey = REALITY_PUBLIC_KEY,
             shortId = REALITY_SHORT_ID,
-            spiderX = ""
+            spiderX = "",
+            path = XHTTP_PATH,
+            xhttpMode = XHTTP_MODE,
+            xhttpExtra = XHTTP_EXTRA
         )
     }
 
@@ -186,7 +211,7 @@ object TelegramVpnConfig {
      * Save routing rulesets to MmkvManager.
      * Order matters: rules are evaluated top to bottom.
      * 1. Private IPs → direct (LAN, loopback)
-     * 2. Telegram domains → proxy (раньше IP: медиа/CDN чаще матчится по hostname/sniffing)
+     * 2. Telegram domains → proxy
      * 3. Telegram IPs → proxy
      * 4. Everything else → direct (so only Telegram goes through VPN)
      */
@@ -201,8 +226,74 @@ object TelegramVpnConfig {
             getTelegramDomainRuleset(),
             getTelegramIpRuleset()
         )
-
         MmkvManager.encodeRoutingRulesets(newRulesets)
         MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, "AsIs")
+    }
+
+    /**
+     * Global mode: route all traffic through VPN, only bypass LAN.
+     */
+    private fun saveGlobalRoutingRulesets() {
+        val newRulesets = mutableListOf(
+            RulesetItem(
+                remarks = "Private IPs Direct",
+                outboundTag = AppConfig.TAG_DIRECT,
+                enabled = true,
+                ip = listOf("geoip:private")
+            ),
+            RulesetItem(
+                remarks = "All Traffic Proxy",
+                outboundTag = AppConfig.TAG_PROXY,
+                enabled = true,
+                port = "0-65535"
+            )
+        )
+        MmkvManager.encodeRoutingRulesets(newRulesets)
+        MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, "AsIs")
+    }
+
+    /**
+     * Smart Russia mode: bypass RU domains/IPs + Black Russia, proxy everything else.
+     *
+     * blackrussia.com and all subdomains resolve to AWS CloudFront IPs (13.223.25.84 / 54.243.117.197).
+     * These are NOT in geoip:ru, so we add them explicitly.
+     * blackhub.games resolves to 87.251.65.8 — Russian IP, covered by geoip:ru.
+     * brgame.ru — DNS non-existent, covered by domain rule as fallback.
+     *
+     * domainStrategy = IPOnDemand: resolves ALL domains to IP immediately before matching,
+     * so even if the game client connects by IP directly, the rule still fires.
+     */
+    private fun saveSmartRussiaRulesets() {
+        val newRulesets = mutableListOf(
+            RulesetItem(remarks = "Private IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                ip = listOf("geoip:private")),
+            RulesetItem(remarks = "Black Russia Domains Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                domain = listOf(
+                    "domain:blackrussia.com",
+                    "domain:blackhub.games",
+                    "domain:brgame.ru",
+                    "domain:launcher.brgame"
+                )),
+            // blackrussia.com resolves to AWS CloudFront — not in geoip:ru
+            RulesetItem(remarks = "Black Russia IPs Direct (AWS CloudFront)", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                ip = listOf("13.223.25.84", "54.243.117.197", "13.224.0.0/14", "13.32.0.0/15")),
+            RulesetItem(remarks = "Russia domains Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                domain = listOf("geosite:category-ru")),
+            RulesetItem(remarks = "Russia IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                ip = listOf("geoip:ru")),
+            RulesetItem(remarks = "All other Proxy", outboundTag = AppConfig.TAG_PROXY, enabled = true,
+                port = "0-65535")
+        )
+        MmkvManager.encodeRoutingRulesets(newRulesets)
+        // IPOnDemand: resolve ALL domains to IP before matching — catches game clients
+        // that connect directly by IP without going through DNS
+        MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, "IPOnDemand")
+    }
+
+    /**
+     * Disable per-app proxy so all apps go through VPN.
+     */
+    private fun disablePerAppProxy() {
+        MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY, false)
     }
 }
