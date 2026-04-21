@@ -13,8 +13,8 @@ android {
         applicationId = "com.v2ray.ang"
         minSdk = 24
         targetSdk = 36
-        versionCode = 766
-        versionName = "2.0.66"
+        versionCode = 767
+        versionName = "2.0.67"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -41,15 +41,10 @@ android {
 
     signingConfigs {
         create("release") {
-            val localProps = java.util.Properties()
-            val localPropsFile = rootProject.file("local.properties")
-            if (localPropsFile.exists()) {
-                localPropsFile.inputStream().use { localProps.load(it) }
-            }
             storeFile = file(rootProject.projectDir.absolutePath + "/app/apextg.keystore")
-            storePassword = localProps["KEYSTORE_PASSWORD"] as String? ?: "666133kivel"
-            keyAlias = localProps["KEY_ALIAS"] as String? ?: "apextg"
-            keyPassword = localProps["KEYSTORE_PASSWORD"] as String? ?: "666133kivel"
+            storePassword = "666133kivel"
+            keyAlias = "apextg"
+            keyPassword = "666133kivel"
         }
     }
 
