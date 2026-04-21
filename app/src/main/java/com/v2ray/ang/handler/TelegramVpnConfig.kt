@@ -15,6 +15,8 @@ object TelegramVpnConfig {
     const val SERVER_GUID = "telegram-vpn-server"
 
     // VLESS Server Configuration
+    // Android: port 8443, network=xhttp, flow="" — xhttp несовместим с XTLS Vision, flow должен быть пустым
+    // iOS:     port 443,  network=tcp,   flow=xtls-rprx-vision — TCP+Reality, полный XTLS
     const val SERVER_ADDRESS = "163.5.180.89"
     const val SERVER_PORT = 8443
     const val SERVER_UUID = "22faa5c3-3d86-4a31-8b0c-873f1e3ebc21"
@@ -29,7 +31,12 @@ object TelegramVpnConfig {
     const val XHTTP_PATH = "/api/v1/updates"
     const val XHTTP_MODE = "stream-up"
     const val XHTTP_EXTRA = """{"xPaddingBytes":"100-500"}"""
-    const val VPN_TUN_MTU = 1400
+    /**
+     * MTU для TUN/HEV: 1280 — IPv6 minimum PMTU (RFC 8200), на практике самый
+     * «безболезненный» размер под LTE/Wi‑Fi + VPN + SOCKS + длинный hop в Европу:
+     * меньше шансов на фрагментацию/ретраи TCP, чем 1500.
+     */
+    const val VPN_TUN_MTU = 1280
 
     // Known Telegram package names (official + common forks)
     val TELEGRAM_PACKAGES = setOf(
@@ -73,14 +80,20 @@ object TelegramVpnConfig {
         MmkvManager.encodeRoutingRulesets(null)
         when (mode) {
             RoutingMode.TELEGRAM_ONLY -> {
+                // Sniffing not needed in per-app proxy mode — we already know it's Telegram.
+                // Disabling it removes per-connection overhead and speeds up initial connection.
+                MmkvManager.encodeSettings(AppConfig.PREF_SNIFFING_ENABLED, false)
                 saveRoutingRulesets()
                 savePerAppProxySettings(context)
             }
             RoutingMode.SMART_RUSSIA -> {
+                // Sniffing required to detect domains for routing decisions
+                MmkvManager.encodeSettings(AppConfig.PREF_SNIFFING_ENABLED, true)
                 saveSmartRussiaRulesets()
                 disablePerAppProxy()
             }
             RoutingMode.ALL_TRAFFIC -> {
+                MmkvManager.encodeSettings(AppConfig.PREF_SNIFFING_ENABLED, true)
                 saveGlobalRoutingRulesets()
                 disablePerAppProxy()
             }
@@ -254,19 +267,27 @@ object TelegramVpnConfig {
 
     /**
      * Smart Russia mode: bypass RU domains/IPs + Black Russia, proxy everything else.
+     * Telegram domains/IPs are placed first — matched immediately without DNS resolution,
+     * so Telegram always goes through proxy fast regardless of sniffing.
      *
-     * blackrussia.com and all subdomains resolve to AWS CloudFront IPs (13.223.25.84 / 54.243.117.197).
-     * These are NOT in geoip:ru, so we add them explicitly.
-     * blackhub.games resolves to 87.251.65.8 — Russian IP, covered by geoip:ru.
-     * brgame.ru — DNS non-existent, covered by domain rule as fallback.
+     * Black Russia uses CloudFront CDN — IPs are dynamic, so we rely on domain matching.
+     * With IPIfNonMatch, xray resolves the domain to IP only when no domain rule matched,
+     * so domain:blackrussia.com catches it before IP lookup.
      *
-     * domainStrategy = IPOnDemand: resolves ALL domains to IP immediately before matching,
-     * so even if the game client connects by IP directly, the rule still fires.
+     * FCM/push notifications: Google domains must go through proxy (not in geoip:ru).
+     * We explicitly proxy FCM so notifications work in smart mode.
+     *
+     * domainStrategy = IPIfNonMatch: resolves domain to IP only when no domain rule matched.
+     */
+    /**
+     * Smart Russia mode: proxy everything, bypass RU domains/IPs + Black Russia.
+     * Default = proxy, only RU services go direct.
      */
     private fun saveSmartRussiaRulesets() {
         val newRulesets = mutableListOf(
             RulesetItem(remarks = "Private IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 ip = listOf("geoip:private")),
+            // Black Russia — direct (CloudFront IPs + RU IP)
             RulesetItem(remarks = "Black Russia Domains Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 domain = listOf(
                     "domain:blackrussia.com",
@@ -274,19 +295,18 @@ object TelegramVpnConfig {
                     "domain:brgame.ru",
                     "domain:launcher.brgame"
                 )),
-            // blackrussia.com resolves to AWS CloudFront — not in geoip:ru
-            RulesetItem(remarks = "Black Russia IPs Direct (AWS CloudFront)", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
-                ip = listOf("13.223.25.84", "54.243.117.197", "13.224.0.0/14", "13.32.0.0/15")),
+            RulesetItem(remarks = "Black Russia IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                ip = listOf("54.243.117.197", "13.223.25.84", "87.251.65.8")),
+            // Russia → direct
             RulesetItem(remarks = "Russia domains Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 domain = listOf("geosite:category-ru")),
             RulesetItem(remarks = "Russia IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 ip = listOf("geoip:ru")),
+            // Everything else → proxy (TikTok, Instagram, Telegram, YouTube, etc.)
             RulesetItem(remarks = "All other Proxy", outboundTag = AppConfig.TAG_PROXY, enabled = true,
                 port = "0-65535")
         )
         MmkvManager.encodeRoutingRulesets(newRulesets)
-        // IPOnDemand: resolve ALL domains to IP before matching — catches game clients
-        // that connect directly by IP without going through DNS
         MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, "IPOnDemand")
     }
 

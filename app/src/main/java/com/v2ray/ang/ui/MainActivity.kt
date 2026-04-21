@@ -11,6 +11,8 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.VpnService
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
@@ -22,6 +24,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.textfield.TextInputEditText
+import com.v2ray.ang.BuildConfig
 import com.google.firebase.database.ValueEventListener
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
@@ -46,6 +49,8 @@ class MainActivity : AppCompatActivity() {
     private var currentAccessStatus = AccessManager.AccessStatus.UNKNOWN
     private var updateRequired = false
     private var updateDownloadUrl: String? = null
+    private val restartHandler = Handler(Looper.getMainLooper())
+    private var pendingRestartRunnable: Runnable? = null
 
     private val deviceId by lazy {
         Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
@@ -112,6 +117,9 @@ class MainActivity : AppCompatActivity() {
     // ── Force update check ────────────────────────────────────────────────────
 
     private fun checkForceUpdate() {
+        // Skip update check in debug builds (e.g. when running from Android Studio)
+        if (BuildConfig.DEBUG) return
+
         val db = com.google.firebase.database.FirebaseDatabase.getInstance().reference
         db.child("app_config").get()
             .addOnSuccessListener { snapshot ->
@@ -415,7 +423,7 @@ class MainActivity : AppCompatActivity() {
             }
             TelegramVpnConfig.applyRoutingMode(this, mode)
             updateRoutingLabel(mode)
-            if (isRunning) { stopV2Ray(); startV2Ray() }
+            if (isRunning) scheduleRestart()
         }
     }
 
@@ -432,7 +440,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateRoutingLabel(mode: TelegramVpnConfig.RoutingMode) {
         binding.tvRoutingMode.text = when (mode) {
             TelegramVpnConfig.RoutingMode.TELEGRAM_ONLY -> "Только Telegram"
-            TelegramVpnConfig.RoutingMode.SMART_RUSSIA  -> "Весь трафик, кроме РФ сервисов"
+            TelegramVpnConfig.RoutingMode.SMART_RUSSIA  -> "Всё через VPN, кроме РФ-сервисов"
             TelegramVpnConfig.RoutingMode.ALL_TRAFFIC   -> "Весь трафик"
         }
     }
@@ -586,7 +594,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun scheduleRestart() {
+        // Cancel previous restart if user switches modes rapidly
+        pendingRestartRunnable?.let { restartHandler.removeCallbacks(it) }
+        pendingRestartRunnable = Runnable {
+            stopV2Ray()
+            // stopCoreLoop is now synchronous — 300ms is enough for the VPN interface
+            // to fully close before we re-establish it
+            restartHandler.postDelayed({ startV2Ray() }, 300)
+        }
+        // 300ms debounce — coalesces rapid mode switches into a single restart
+        restartHandler.postDelayed(pendingRestartRunnable!!, 300)
+    }
+
     fun importConfigViaSub() {
-        // Not used in simplified version
+        // reserved for future use
     }
 }
