@@ -282,12 +282,139 @@ object TelegramVpnConfig {
     /**
      * Smart Russia mode: proxy everything, bypass RU domains/IPs + Black Russia.
      * Default = proxy, only RU services go direct.
+     *
+     * Explicit direct rules for RU banks, Gosuslugi, marketplaces — placed BEFORE
+     * the generic geosite:category-ru rule so they are always matched even if
+     * geosite data is outdated or missing.
      */
     private fun saveSmartRussiaRulesets() {
         val newRulesets = mutableListOf(
             RulesetItem(remarks = "Private IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 ip = listOf("geoip:private")),
-            // Black Russia — direct (CloudFront IPs + RU IP)
+
+            // ── RU Banks ──────────────────────────────────────────────────────────
+            RulesetItem(remarks = "RU Banks Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                domain = listOf(
+                    // Sberbank
+                    "domain:sberbank.ru", "domain:sber.ru", "domain:sberbankpremium.ru",
+                    "domain:online.sberbank.ru",
+                    // Tinkoff / T-Bank
+                    "domain:tinkoff.ru", "domain:tbank.ru",
+                    // VTB
+                    "domain:vtb.ru", "domain:vtb24.ru",
+                    // Alfa-Bank
+                    "domain:alfabank.ru", "domain:alfa-bank.ru",
+                    // Raiffeisen
+                    "domain:raiffeisen.ru", "domain:raiffeisenbank.ru",
+                    // Gazprombank
+                    "domain:gazprombank.ru",
+                    // Rosbank
+                    "domain:rosbank.ru",
+                    // Otkritie
+                    "domain:open.ru", "domain:otkritie.ru",
+                    // Sovcombank
+                    "domain:sovcombank.ru",
+                    // Pochta Bank
+                    "domain:pochtabank.ru",
+                    // MKB
+                    "domain:mkb.ru",
+                    // Uralsib
+                    "domain:uralsib.ru",
+                    // Promsvyazbank
+                    "domain:psbank.ru",
+                    // RSHB
+                    "domain:rshb.ru",
+                    // Absolut Bank
+                    "domain:absolutbank.ru",
+                    // Home Credit
+                    "domain:homecredit.ru",
+                    // Renaissance Credit
+                    "domain:rencredit.ru",
+                    // SBP / Faster Payments System
+                    "domain:sbp.nspk.ru", "domain:nspk.ru",
+                    // Mir card
+                    "domain:mironline.ru", "domain:mirpay.ru",
+                    // ЦБ РФ
+                    "domain:cbr.ru"
+                )),
+
+            // ── Gosuslugi & Government ────────────────────────────────────────────
+            RulesetItem(remarks = "Gosuslugi Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                domain = listOf(
+                    "domain:gosuslugi.ru",
+                    "domain:esia.gosuslugi.ru",
+                    "domain:lk.gosuslugi.ru",
+                    "domain:beta.gosuslugi.ru",
+                    "domain:pos.gosuslugi.ru",
+                    "domain:nalog.ru",
+                    "domain:lkfl.nalog.ru",
+                    "domain:lkul.nalog.ru",
+                    "domain:lkip.nalog.ru",
+                    "domain:pfr.gov.ru",
+                    "domain:sfr.gov.ru",          // СФР (бывший ПФР)
+                    "domain:mos.ru",
+                    "domain:pgu.mos.ru",
+                    "domain:mos.ru",
+                    "domain:goskey.ru",
+                    "domain:epgu.gosuslugi.ru",
+                    "domain:digital.gov.ru",
+                    "domain:minsvyaz.ru",
+                    "domain:rosreestr.gov.ru",
+                    "domain:rosreestr.ru",
+                    "domain:fss.ru",
+                    "domain:fns.ru",
+                    "domain:customs.gov.ru",
+                    "domain:mvd.ru",
+                    "domain:gibdd.ru",
+                    "domain:mos-reg.ru",
+                    "domain:gosuslugi66.ru"
+                )),
+
+            // ── Marketplaces ──────────────────────────────────────────────────────
+            RulesetItem(remarks = "RU Marketplaces Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
+                domain = listOf(
+                    // Ozon
+                    "domain:ozon.ru", "domain:ozon.travel", "domain:ozonbank.ru",
+                    "domain:static.ozone.ru",
+                    // Wildberries
+                    "domain:wildberries.ru", "domain:wb.ru", "domain:wbstatic.net",
+                    "domain:wbx-content.com",
+                    // Yandex Market / Lavka / Eats
+                    "domain:market.yandex.ru", "domain:beru.ru",
+                    "domain:lavka.yandex.ru", "domain:eda.yandex.ru",
+                    // AliExpress Russia
+                    "domain:aliexpress.ru",
+                    // Avito
+                    "domain:avito.ru",
+                    // CDEK
+                    "domain:cdek.ru",
+                    // Boxberry
+                    "domain:boxberry.ru",
+                    // Lamoda
+                    "domain:lamoda.ru",
+                    // Leroy Merlin RU
+                    "domain:leroymerlin.ru",
+                    // DNS shop
+                    "domain:dns-shop.ru",
+                    // Citilink
+                    "domain:citilink.ru",
+                    // Eldorado
+                    "domain:eldorado.ru",
+                    // M.Video
+                    "domain:mvideo.ru",
+                    // Perekrestok / X5
+                    "domain:perekrestok.ru", "domain:x5.ru",
+                    // Magnit
+                    "domain:magnit.ru",
+                    // Sbermarket / Samokat
+                    "domain:sbermarket.ru", "domain:samokat.ru",
+                    // Detsky Mir
+                    "domain:detmir.ru",
+                    // Sportmaster
+                    "domain:sportmaster.ru"
+                )),
+
+            // ── Black Russia ──────────────────────────────────────────────────────
             RulesetItem(remarks = "Black Russia Domains Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 domain = listOf(
                     "domain:blackrussia.com",
@@ -297,12 +424,14 @@ object TelegramVpnConfig {
                 )),
             RulesetItem(remarks = "Black Russia IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 ip = listOf("54.243.117.197", "13.223.25.84", "87.251.65.8")),
-            // Russia → direct
+
+            // ── Generic Russia (geosite / geoip) ──────────────────────────────────
             RulesetItem(remarks = "Russia domains Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 domain = listOf("geosite:category-ru")),
             RulesetItem(remarks = "Russia IPs Direct", outboundTag = AppConfig.TAG_DIRECT, enabled = true,
                 ip = listOf("geoip:ru")),
-            // Everything else → proxy (TikTok, Instagram, Telegram, YouTube, etc.)
+
+            // ── Everything else → proxy ───────────────────────────────────────────
             RulesetItem(remarks = "All other Proxy", outboundTag = AppConfig.TAG_PROXY, enabled = true,
                 port = "0-65535")
         )
