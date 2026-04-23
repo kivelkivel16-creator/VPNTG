@@ -11,8 +11,7 @@ RestartSec=10s
 MemoryMax=128M
 
 # Токен и admin ID — НЕ в коде, а здесь
-# Перевыпуа сти токен у BotFather и вставь сюда
-Environment=BOT_TOKEN=REPLACE_WITH_YOUR_BOT_TOKEN
+Environment=BOT_TOKEN=8675996023:AAG23QhfNxTbMzVwYUeSIc6AMceJz9urXeQ
 Environment=ADMIN_ID=REPLACE_WITH_YOUR_ADMIN_ID
 
 [Install]

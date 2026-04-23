@@ -1,0 +1,14 @@
+[Unit]
+Description=iOS Subscription Server
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/usr/local/bin/gunicorn --workers 2 --bind 0.0.0.0:8080 sub_server:app
+Restart=always
+RestartSec=10s
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

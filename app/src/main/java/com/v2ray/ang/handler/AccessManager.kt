@@ -12,6 +12,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -32,6 +33,7 @@ object AccessManager {
     private const val TRAFFIC_UPDATE_INTERVAL_MS = 30_000L // каждые 30 секунд
 
     private var trafficJob: Job? = null
+    private var trafficScope: CoroutineScope? = null
 
     fun getNickname(context: Context? = null): String? {
         return MmkvManager.decodeSettingsString(PREF_NICKNAME)
@@ -69,7 +71,7 @@ object AccessManager {
     fun listenForStatus(deviceId: String, onStatus: (AccessStatus) -> Unit): ValueEventListener {
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val status = snapshot.child("status").getValue(String::class.java)
+                val status = snapshot.getValue(String::class.java)
                 onStatus(when (status) {
                     "approved" -> AccessStatus.APPROVED
                     "rejected" -> AccessStatus.REJECTED
@@ -82,12 +84,12 @@ object AccessManager {
                 onStatus(AccessStatus.UNKNOWN)
             }
         }
-        db.child("vpn_users").child(deviceId).addValueEventListener(listener)
+        db.child("vpn_users").child(deviceId).child("status").addValueEventListener(listener)
         return listener
     }
 
     fun removeListener(deviceId: String, listener: ValueEventListener) {
-        db.child("vpn_users").child(deviceId).removeEventListener(listener)
+        db.child("vpn_users").child(deviceId).child("status").removeEventListener(listener)
     }
 
     /**
@@ -95,14 +97,29 @@ object AccessManager {
      * Вызывается при включении/выключении VPN.
      */
     fun updateOnlineStatus(deviceId: String, online: Boolean) {
-        val updates = mapOf(
-            "online" to online,
-            "lastSeen" to System.currentTimeMillis()
-        )
-        db.child("vpn_users").child(deviceId).updateChildren(updates)
-            .addOnFailureListener {
-                Log.e(AppConfig.TAG, "AccessManager: Failed to update online status", it)
-            }
+        val updates = if (online) {
+            mapOf(
+                "online" to true,
+                "lastSeen" to System.currentTimeMillis()
+            )
+        } else {
+            // When going offline, explicitly set online=false and clear session data
+            mapOf(
+                "online" to false,
+                "lastSeen" to System.currentTimeMillis(),
+                "sessionStart" to null,
+                "sessionUpMB" to null,
+                "sessionDownMB" to null
+            )
+        }
+        try {
+            db.child("vpn_users").child(deviceId).updateChildren(updates)
+                .addOnFailureListener {
+                    Log.e(AppConfig.TAG, "AccessManager: Failed to update online status", it)
+                }
+        } catch (e: Exception) {
+            Log.e(AppConfig.TAG, "AccessManager: Firebase not available in this process", e)
+        }
 
         if (online) {
             startTrafficReporting(deviceId)
@@ -116,23 +133,27 @@ object AccessManager {
      */
     private fun startTrafficReporting(deviceId: String) {
         stopTrafficReporting()
-        trafficJob = CoroutineScope(Dispatchers.IO).launch {
+        val scope = CoroutineScope(Dispatchers.IO)
+        trafficScope = scope
+        trafficJob = scope.launch {
             val sessionStart = System.currentTimeMillis()
-            var sessionUpBytes = 0L
-            var sessionDownBytes = 0L
+            // Накапливаем суммарный трафик за сессию
+            var totalUpBytes = 0L
+            var totalDownBytes = 0L
             while (true) {
                 delay(TRAFFIC_UPDATE_INTERVAL_MS)
                 try {
-                    val up = V2RayServiceManager.queryStats("proxy", "uplink")
-                    val down = V2RayServiceManager.queryStats("proxy", "downlink")
-                    sessionUpBytes = up
-                    sessionDownBytes = down
+                    // queryStats возвращает байты с момента последнего вызова (delta)
+                    val deltaUp = V2RayServiceManager.queryStats("proxy", "uplink")
+                    val deltaDown = V2RayServiceManager.queryStats("proxy", "downlink")
+                    totalUpBytes += deltaUp
+                    totalDownBytes += deltaDown
                     val updates = mapOf(
                         "online" to true,
                         "lastSeen" to System.currentTimeMillis(),
                         "sessionStart" to sessionStart,
-                        "sessionUpMB" to String.format("%.2f", up / 1024.0 / 1024.0).toDouble(),
-                        "sessionDownMB" to String.format("%.2f", down / 1024.0 / 1024.0).toDouble()
+                        "sessionUpMB" to String.format(java.util.Locale.US, "%.2f", totalUpBytes / 1024.0 / 1024.0).toDouble(),
+                        "sessionDownMB" to String.format(java.util.Locale.US, "%.2f", totalDownBytes / 1024.0 / 1024.0).toDouble()
                     )
                     db.child("vpn_users").child(deviceId).updateChildren(updates)
                 } catch (e: Exception) {
@@ -145,5 +166,7 @@ object AccessManager {
     private fun stopTrafficReporting() {
         trafficJob?.cancel()
         trafficJob = null
+        trafficScope?.cancel()
+        trafficScope = null
     }
 }

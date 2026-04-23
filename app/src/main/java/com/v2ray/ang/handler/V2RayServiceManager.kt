@@ -219,20 +219,6 @@ object V2RayServiceManager {
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
             NotificationManager.startSpeedNotification(currentConfig)
             Log.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
-
-            // Auto-test server connectivity after startup
-            CoroutineScope(Dispatchers.IO).launch {
-                kotlinx.coroutines.delay(2000)
-                try {
-                    val delay = coreController.measureDelay("https://www.gstatic.com/generate_204")
-                    Log.i(AppConfig.TAG, "StartCore-Manager: Server ping = ${delay}ms")
-                    if (delay < 0) {
-                        Log.e(AppConfig.TAG, "StartCore-Manager: Server UNREACHABLE — check server address/port/keys")
-                    }
-                } catch (e: Exception) {
-                    Log.e(AppConfig.TAG, "StartCore-Manager: Ping failed: ${e.message}")
-                }
-            }
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to complete startup", e)
             return false
@@ -249,12 +235,19 @@ object V2RayServiceManager {
         val service = getService() ?: return false
 
         if (coreController.isRunning) {
-            CoroutineScope(Dispatchers.IO).launch {
+            // stopLoop is blocking — run on IO thread but wait for completion
+            // so that a subsequent startCoreLoop doesn't race with shutdown
+            val job = CoroutineScope(Dispatchers.IO).launch {
                 try {
                     coreController.stopLoop()
                 } catch (e: Exception) {
                     Log.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
                 }
+            }
+            // Block current thread briefly to let the native stop complete
+            // This prevents "port in use" errors when restarting immediately after stop
+            runCatching {
+                kotlinx.coroutines.runBlocking { job.join() }
             }
         }
 
@@ -411,8 +404,10 @@ object V2RayServiceManager {
                 AppConfig.MSG_STATE_RESTART -> {
                     Log.i(AppConfig.TAG, "StartCore-Manager: Restart service")
                     serviceControl.stopService()
-                    Thread.sleep(500L)
-                    startVService(serviceControl.getService())
+                    CoroutineScope(Dispatchers.IO).launch {
+                        kotlinx.coroutines.delay(500L)
+                        startVService(serviceControl.getService())
+                    }
                 }
 
                 AppConfig.MSG_MEASURE_DELAY -> {

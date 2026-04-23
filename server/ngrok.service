@@ -1,0 +1,11 @@
+[Unit]
+Description=ngrok tunnel
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/ngrok http --domain=hacksaw-tiger-payday.ngrok-free.dev 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

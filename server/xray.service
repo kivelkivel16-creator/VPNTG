@@ -10,9 +10,11 @@ NoNewPrivileges=true
 ExecStartPre=/usr/local/bin/xray run -test -config /usr/local/etc/xray/config.json
 ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
 Restart=always
-RestartSec=5s
+RestartSec=3s
+StartLimitIntervalSec=60
+StartLimitBurst=5
 # Лимит памяти — xray обычно ест 50-150MB, ставим запас
-MemoryMax=256M
+MemoryMax=512M
 # Лимит файловых дескрипторов
 LimitNOFILE=65535
 LimitNPROC=65535

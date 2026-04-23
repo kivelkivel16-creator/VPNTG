@@ -24,6 +24,9 @@ iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 iptables -A INPUT -p tcp --dport 8443 -j ACCEPT
 iptables -A INPUT -p udp --dport 8443 -j ACCEPT
 
+# iOS subscription server
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+
 # Сохраняем правила
 iptables-save > /etc/iptables/rules.v4
 

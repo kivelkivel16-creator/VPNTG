@@ -15,10 +15,19 @@ send_alert() {
 }
 
 if ! nc -z -w3 "$SERVER_HOST" "$SERVER_PORT" 2>/dev/null; then
-    # Отправляем алерт только один раз, не спамим
-    if [ ! -f "$LOCK_FILE" ]; then
-        send_alert "ALERT: xray port ${SERVER_PORT} unreachable on ${SERVER_HOST}"
-        touch "$LOCK_FILE"
+    # Пытаемся перезапустить xray
+    systemctl restart xray 2>/dev/null
+    sleep 5
+    # Проверяем снова после рестарта
+    if ! nc -z -w3 "$SERVER_HOST" "$SERVER_PORT" 2>/dev/null; then
+        # Всё ещё недоступен — шлём алерт
+        if [ ! -f "$LOCK_FILE" ]; then
+            send_alert "ALERT: xray port ${SERVER_PORT} unreachable on ${SERVER_HOST} (auto-restart failed)"
+            touch "$LOCK_FILE"
+        fi
+    else
+        send_alert "INFO: xray was down, auto-restarted successfully"
+        rm -f "$LOCK_FILE"
     fi
 else
     # Порт доступен — удаляем lock если был

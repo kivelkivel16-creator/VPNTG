@@ -16,10 +16,11 @@ import asyncio
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 log = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID  = int(os.environ.get("ADMIN_ID", "0"))
-DB_URL    = "https://project-5309763298767572901-default-rtdb.europe-west1.firebasedatabase.app/"
-CRED_FILE = "/root/firebase-key.json"
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "")
+ADMIN_ID     = int(os.environ.get("ADMIN_ID", "0"))
+SUB_BASE_URL = os.environ.get("SUB_BASE_URL", "https://163.5.180.89:8080/sub")
+DB_URL       = "https://project-5309763298767572901-default-rtdb.europe-west1.firebasedatabase.app/"
+CRED_FILE    = "/root/firebase-key.json"
 
 app = None
 _bot_loop = None  # хранит event loop бота, устанавливается в main()
@@ -498,7 +499,7 @@ async def cmd_ios(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "requestedAt": int(time.time() * 1000)
     })
 
-    sub_url = f"http://163.5.180.89:8080/sub/{token}"
+    sub_url = f"{SUB_BASE_URL}/{token}"
     xray_note = "" if xray_ok else "\n⚠️ Не удалось добавить в xray — добавь вручную"
 
     await update.message.reply_text(

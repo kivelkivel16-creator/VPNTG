@@ -464,6 +464,8 @@ object SettingsManager {
         // Fragment включён по умолчанию — помогает обходить DPI/ТСПУ дросселирование
         // для VLESS+REALITY и TLS соединений (пакеты 1-3 для REALITY, tlshello для TLS)
         ensureDefaultBool(AppConfig.PREF_FRAGMENT_ENABLED, false)
+        // Speed/stats must be enabled for traffic reporting to work
+        MmkvManager.encodeSettings(AppConfig.PREF_SPEED_ENABLED, true)
     }
 
     private fun ensureDefaultValue(key: String, default: String) {
@@ -473,8 +475,8 @@ object SettingsManager {
     }
 
     private fun ensureDefaultBool(key: String, default: Boolean) {
-        // MMKV хранит bool отдельно от string, поэтому проверяем через decodeSettingsBool с инвертированным дефолтом
-        // Если значение никогда не было задано, оба вызова вернут разные результаты
+        // Если оба вызова с разными дефолтами возвращают одинаковое значение —
+        // значит ключ задан явно (возвращается сохранённое значение, а не дефолт)
         val storedTrue = MmkvManager.decodeSettingsBool(key, true)
         val storedFalse = MmkvManager.decodeSettingsBool(key, false)
         if (storedTrue == storedFalse) {

@@ -38,6 +38,75 @@ object TelegramVpnConfig {
      */
     const val VPN_TUN_MTU = 1280
 
+    /**
+     * Apps that actively detect VPN via NetworkCapabilities.TRANSPORT_VPN.
+     * Source: Meduza/RBC investigation, April 2026 — 22 of Russia's top 30 apps.
+     * These are excluded from the VPN interface entirely in SMART_RUSSIA mode
+     * so they see no VPN and stop showing "disable VPN" warnings.
+     * Traffic still goes direct because their domains/IPs are in the direct ruleset.
+     */
+    val VPN_SENSITIVE_PACKAGES = setOf(
+        // ── Banks ────────────────────────────────────────────────────────────────
+        "ru.sberbankmobile",                    // Сбербанк Онлайн
+        "ru.sberbank.sbbol",                    // СберБизнес
+        "com.idamob.tinkoff.android",           // Тинькофф / Т-Банк
+        "ru.vtb24.mobilebanking.android",       // ВТБ Онлайн
+        "ru.alfabank.mobile.android",           // Альфа-Банк
+        "ru.raiffeisennews",                    // Райффайзен
+        "ru.gazprombank.android",               // Газпромбанк
+        "ru.rosbank.android",                   // Росбанк
+        "ru.openbank.app",                      // Открытие
+        "ru.sovcombank.sovcombank",             // Совкомбанк
+        "ru.pochtabank.app",                    // Почта Банк
+        "ru.mkb.android",                       // МКБ
+        "ru.uralsib.mobile",                    // Уралсиб
+        "ru.psbank.mobile",                     // ПСБ
+        "ru.rshb.mobilebank",                   // РСХБ
+        "ru.homecredit.mobilebank",             // Хоум Кредит
+        "ru.rencredit.mobile",                  // Ренессанс Кредит
+        // ── Marketplaces ─────────────────────────────────────────────────────────
+        "ru.ozon.app.android",                  // Ozon
+        "com.wildberries.ru",                   // Wildberries
+        "ru.sbermegamarket.app",                // МегаМаркет (SberMegaMarket)
+        "ru.samokat.app",                       // Самокат
+        "ru.avito.android",                     // Авито
+        "ru.vkusvill.android",                  // ВкусВилл
+        // ── Yandex ───────────────────────────────────────────────────────────────
+        "com.yandex.browser",                   // Яндекс Браузер
+        "ru.yandex.yandexmaps",                 // Яндекс Карты
+        "com.yandex.launcher",                  // Яндекс Лончер
+        "ru.yandex.market",                     // Яндекс Маркет
+        "ru.yandex.taxi",                       // Яндекс Такси
+        "ru.yandex.music",                      // Яндекс Музыка
+        "com.yandex.mail",                      // Яндекс Почта
+        "ru.yandex.disk",                       // Яндекс Диск
+        // ── VK ───────────────────────────────────────────────────────────────────
+        "com.vkontakte.android",                // ВКонтакте
+        "ru.ok.android",                        // Одноклассники
+        "ru.mail.mailapp",                      // Почта Mail.ru / Max
+        "com.vk.im",                            // VK Мессенджер / Max
+        // ── Other ────────────────────────────────────────────────────────────────
+        "ru.dublgis.dgismobile",                // 2ГИС
+        "ru.kinopoisk.android",                 // Кинопоиск
+        // ── Gosuslugi & Government ───────────────────────────────────────────────
+        "ru.gosuslugi.mobile",                  // Госуслуги (основное)
+        "ru.gosuslugi.android",                 // Госуслуги (альтернативное)
+        "ru.gosuslugi",                         // Госуслуги (короткое)
+        "ru.gosuslugi.culture",                 // Госуслуги Культура
+        "ru.gosuslugi.goskey",                  // Госключ
+        "ru.nalog.lkfl",                        // Налоги ФЛ
+        "ru.nalog.lkul",                        // Налоги ЮЛ
+        "ru.nalog.lkip",                        // Налоги ИП
+        "ru.mos.app",                           // Mos.ru
+        "ru.pfr.pfronline",                     // СФР (ПФР)
+        "ru.sfr.sfronline",                     // СФР (новое)
+        "ru.epgu.mobile",                       // ЕПГУ
+        "ru.esia.android",                      // ЕСИА
+        "ru.digital.gov",                       // Цифровое правительство
+        "ru.mintsifry.mobile",                  // Минцифры
+        "ru.rostel"                             // Ростелеком (ЕСИА, Госуслуги)
+    )
+
     // Known Telegram package names (official + common forks)
     val TELEGRAM_PACKAGES = setOf(
         "org.telegram.messenger",          // Official Telegram
@@ -90,7 +159,7 @@ object TelegramVpnConfig {
                 // Sniffing required to detect domains for routing decisions
                 MmkvManager.encodeSettings(AppConfig.PREF_SNIFFING_ENABLED, true)
                 saveSmartRussiaRulesets()
-                disablePerAppProxy()
+                saveBypassAppSettings(context)
             }
             RoutingMode.ALL_TRAFFIC -> {
                 MmkvManager.encodeSettings(AppConfig.PREF_SNIFFING_ENABLED, true)
@@ -98,6 +167,28 @@ object TelegramVpnConfig {
                 disablePerAppProxy()
             }
         }
+    }
+
+    /**
+     * Bypass mode for SMART_RUSSIA: exclude VPN-sensitive apps (banks, gosuslugi)
+     * from the VPN interface entirely. They won't see TRANSPORT_VPN at all.
+     * Their traffic still goes direct via routing rules.
+     */
+    private fun saveBypassAppSettings(context: Context) {
+        val pm = context.packageManager
+        val installedSensitiveApps = VPN_SENSITIVE_PACKAGES.filter { pkg ->
+            try { pm.getPackageInfo(pkg, 0); true } catch (e: Exception) { false }
+        }.toMutableSet()
+
+        if (installedSensitiveApps.isEmpty()) {
+            disablePerAppProxy()
+            return
+        }
+
+        // Bypass mode: listed apps are excluded from VPN interface
+        MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY, true)
+        MmkvManager.encodeSettings(AppConfig.PREF_BYPASS_APPS, true) // bypass = disallow list
+        MmkvManager.encodeSettings(AppConfig.PREF_PER_APP_PROXY_SET, installedSensitiveApps)
     }
 
     /**

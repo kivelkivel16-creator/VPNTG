@@ -21,10 +21,12 @@ import com.v2ray.ang.AppConfig.LOOPBACK
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
+import com.v2ray.ang.handler.AccessManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
+import android.provider.Settings
 import com.v2ray.ang.util.MyContextWrapper
 import com.v2ray.ang.util.Utils
 import java.lang.ref.SoftReference
@@ -119,6 +121,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
             return
         }
         Log.i(AppConfig.TAG, "StartCore-VPN: Core loop started, launching tun2socks")
+        val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+        AccessManager.updateOnlineStatus(deviceId, true)
         // Start HevTun after xray core is running
         runTun2socks()
     }
@@ -332,19 +336,17 @@ class V2RayVpnService : VpnService(), ServiceControl {
             tun2SocksService = null
         }
 
-        // Delay to allow xray core to fully start and open socks port
+        // Reduced from 1000ms — xray opens socks port fast enough at 300ms
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             Log.i(AppConfig.TAG, "StartCore-VPN: Starting tun2socks after delay, service=${tun2SocksService}")
             tun2SocksService?.startTun2Socks()
-        }, 1000)
+        }, 300)
     }
 
     private fun stopAllService(isForced: Boolean = true) {
-//        val configName = defaultDPreference.getPrefString(PREF_CURR_CONFIG_GUID, "")
-//        val emptyInfo = VpnNetworkInfo()
-//        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
-//        saveVpnNetworkInfo(configName, info)
         isRunning = false
+        val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+        AccessManager.updateOnlineStatus(deviceId, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 connectivity.unregisterNetworkCallback(defaultNetworkCallback)

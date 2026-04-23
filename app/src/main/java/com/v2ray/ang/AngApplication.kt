@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.multidex.MultiDexApplication
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import com.google.firebase.FirebaseApp
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.handler.SettingsManager
@@ -33,6 +34,10 @@ class AngApplication : MultiDexApplication() {
         super.onCreate()
 
         try {
+            // Initialize Firebase first — must happen in every process
+            // (VPN service runs in :RunSoLibV2RayDaemon process)
+            FirebaseApp.initializeApp(this)
+
             MMKV.initialize(this)
 
             // Initialize WorkManager with the custom configuration

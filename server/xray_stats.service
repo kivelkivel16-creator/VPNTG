@@ -1,0 +1,15 @@
+[Unit]
+Description=Xray Traffic Stats Poller
+After=network.target xray.service
+Requires=xray.service
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/usr/bin/python3 /root/server/xray_stats.py
+Restart=always
+RestartSec=10s
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
