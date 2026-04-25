@@ -71,54 +71,66 @@ def subscription(token):
         log.info("Rate limited token: '%s'", token)
         return Response("Too many requests", status=429)
 
-    users = db.reference("vpn_users").get() or {}
-
-    for device_id, user_data in users.items():
+    # Fast path: direct lookup via index
+    device_id = db.reference(f"sub_tokens/{token}").get()
+    if device_id:
+        user_data = db.reference(f"vpn_users/{device_id}").get()
         if not isinstance(user_data, dict):
-            continue
-        stored_token = user_data.get("sub_token", "").strip()
+            log.info("No user data for device_id: '%s'", device_id)
+            return Response("Not found", status=404)
+    else:
+        # Fallback: full scan for legacy users without index
+        log.info("Token not in index, falling back to full scan: '%s'", token)
+        users = db.reference("vpn_users").get() or {}
+        device_id = None
+        user_data = None
+        for did, udata in users.items():
+            if isinstance(udata, dict) and udata.get("sub_token", "").strip() == token:
+                device_id = did
+                user_data = udata
+                # Write index so next request is fast
+                db.reference(f"sub_tokens/{token}").set(device_id)
+                log.info("Backfilled index for token '%s' -> '%s'", token, device_id)
+                break
+        if not device_id:
+            log.info("Token not found: '%s'", token)
+            return Response("Not found", status=404)
 
-        if stored_token != token:
-            continue
+    if user_data.get("status") != "approved":
+        log.info("Access denied for %s: status=%s", device_id, user_data.get("status"))
+        return Response("Access denied", status=403)
 
-        if user_data.get("status") != "approved":
-            log.info("Access denied for %s: status=%s", device_id, user_data.get("status"))
-            return Response("Access denied", status=403)
+    user_agent = request.headers.get("User-Agent", "unknown")
 
-        user_agent = request.headers.get("User-Agent", "unknown")
+    # Ignore bot/crawler requests (Telegram link preview, etc.)
+    bot_keywords = ("TelegramBot", "TwitterBot", "facebookexternalhit", "Googlebot", "crawler", "spider")
+    if any(kw.lower() in user_agent.lower() for kw in bot_keywords):
+        log.info("Ignoring bot UA for %s: %s", device_id, user_agent)
+        return Response("OK", status=200)
 
-        # Ignore bot/crawler requests (Telegram link preview, etc.)
-        bot_keywords = ("TelegramBot", "TwitterBot", "facebookexternalhit", "Googlebot", "crawler", "spider")
-        if any(kw.lower() in user_agent.lower() for kw in bot_keywords):
-            log.info("Ignoring bot UA for %s: %s", device_id, user_agent)
-            return Response("OK", status=200)
+    locked_ua = user_data.get("locked_ua")
 
-        locked_ua = user_data.get("locked_ua")
+    if locked_ua is None:
+        db.reference(f"vpn_users/{device_id}").update({
+            "locked_ua": user_agent,
+            "lastSeen": int(time.time() * 1000),
+            "platform": "ios"
+        })
+        log.info("Locked %s to UA: %s", device_id, user_agent)
+    elif locked_ua != user_agent:
+        log.info("UA mismatch for %s: locked='%s' got='%s'", device_id, locked_ua, user_agent)
+        return Response("Access denied", status=403)
+    else:
+        # Update lastSeen at most once every 5 minutes to avoid spamming Firebase
+        last_seen = user_data.get("lastSeen", 0)
+        now_ms = int(time.time() * 1000)
+        if now_ms - last_seen > 5 * 60 * 1000:
+            db.reference(f"vpn_users/{device_id}").update({"lastSeen": now_ms})
 
-        if locked_ua is None:
-            db.reference(f"vpn_users/{device_id}").update({
-                "locked_ua": user_agent,
-                "lastSeen": int(time.time() * 1000),
-                "platform": "ios"
-            })
-            log.info("Locked %s to UA: %s", device_id, user_agent)
-        elif locked_ua != user_agent:
-            log.info("UA mismatch for %s: locked='%s' got='%s'", device_id, locked_ua, user_agent)
-            return Response("Access denied", status=403)
-        else:
-            # Update lastSeen at most once every 5 minutes to avoid spamming Firebase
-            last_seen = user_data.get("lastSeen", 0)
-            now_ms = int(time.time() * 1000)
-            if now_ms - last_seen > 5 * 60 * 1000:
-                db.reference(f"vpn_users/{device_id}").update({"lastSeen": now_ms})
-
-        # Plain text — works with Happ, V2Box, Streisand
-        user_uuid = user_data.get("xray_uuid")
-        config = VLESS_TEMPLATE.format(uuid=user_uuid) if user_uuid else VLESS_CONFIG_LEGACY
-        return Response(config + "\n", mimetype="text/plain; charset=utf-8")
-
-    log.info("Token not found: '%s'", token)
-    return Response("Not found", status=404)
+    # Plain text — works with Happ, V2Box, Streisand
+    user_uuid = user_data.get("xray_uuid")
+    config = VLESS_TEMPLATE.format(uuid=user_uuid) if user_uuid else VLESS_CONFIG_LEGACY
+    return Response(config + "\n", mimetype="text/plain; charset=utf-8")
 
 
 @app.route("/health")

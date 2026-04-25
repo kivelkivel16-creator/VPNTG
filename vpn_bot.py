@@ -498,6 +498,7 @@ async def cmd_ios(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "xray_uuid": user_uuid,
         "requestedAt": int(time.time() * 1000)
     })
+    db.reference(f"sub_tokens/{token}").set(device_id)
 
     sub_url = f"{SUB_BASE_URL}/{token}"
     xray_note = "" if xray_ok else "\n⚠️ Не удалось добавить в xray — добавь вручную"
